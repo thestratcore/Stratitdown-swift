@@ -1,13 +1,13 @@
 import Foundation
 import Security
 
-/// Stores the OpenAI API key as a generic password item, never on disk in plaintext.
+/// Stores the Mistral API key as a generic password item, never on disk in plaintext.
 enum KeychainStore {
-    private static func query(withValue: Bool) -> [String: Any] {
+    private static func query(withValue: Bool, account: String = AppConfig.keychainAccount) -> [String: Any] {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: AppConfig.keychainService,
-            kSecAttrAccount as String: AppConfig.keychainAccount,
+            kSecAttrAccount as String: account,
         ]
         if withValue {
             query[kSecReturnData as String] = true
@@ -44,5 +44,12 @@ enum KeychainStore {
     static func delete() -> Bool {
         let status = SecItemDelete(query(withValue: false) as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
+    }
+
+    /// Removes the OpenAI key left behind by the pre-Mistral version, so a retired
+    /// credential doesn't sit orphaned in the Keychain. Safe to call repeatedly.
+    static func deleteLegacyOpenAIKey() {
+        let query = query(withValue: false, account: AppConfig.legacyKeychainAccount)
+        SecItemDelete(query as CFDictionary)
     }
 }

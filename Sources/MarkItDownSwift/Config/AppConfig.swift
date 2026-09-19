@@ -1,14 +1,28 @@
 import Foundation
 
 enum AppConfig {
-    static let defaultModel = "gpt-4o"
-    static let defaultPrompt = ""
-    static let commonModels = ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "o4-mini"]
+    /// Mistral's rolling OCR alias. OCR output can change when the provider updates this alias.
+    static let ocrModel = "mistral-ocr-latest"
 
     static let keychainService = "local.personal.markitdown-swift"
-    static let keychainAccount = "openai-api-key"
+    static let keychainAccount = "mistral-api-key"
+    /// Account used before the migration to Mistral; cleaned up once on launch.
+    static let legacyKeychainAccount = "openai-api-key"
 
-    static let visionEndpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
+    static let ocrEndpoint = URL(string: "https://api.mistral.ai/v1/ocr")!
+    static let filesEndpoint = URL(string: "https://api.mistral.ai/v1/files")!
+
+    /// Below this, the document is sent inline as a base64 data URI. Larger files use the
+    /// Files API and are deleted after processing on a best-effort basis.
+    static let inlineBase64Limit = 20 * 1024 * 1024
+    /// Mistral's hard limits, checked before any network call.
+    static let maxUploadBytes = 50 * 1024 * 1024
+    static let maxPages = 1000
+
+    /// A PDF counts as having a real text layer once this many non-whitespace characters have
+    /// been found across its pages — enough to rule out incidental embedded/metadata text in an
+    /// otherwise scanned document, low enough to catch anything genuinely text-based.
+    static let pdfTextLayerMinimumCharacters = 50
 
     /// Installed via `uv tool install markitdown[all]`, or via Homebrew / a shell PATH entry.
     /// Resolved per-user at runtime rather than hardcoded, since the uv tool directory lives under
@@ -32,21 +46,9 @@ enum AppConfig {
             return found
         }
 
-        // Fall back to a login-shell PATH lookup, in case markitdown lives somewhere
-        // shell-specific (pyenv, asdf, a custom PATH entry, etc).
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-l", "-c", "command -v markitdown"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        guard (try? process.run()) != nil else { return nil }
-        process.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !path.isEmpty,
-              FileManager.default.isExecutableFile(atPath: path)
-        else { return nil }
-        return path
+        let pathEntries = (ProcessInfo.processInfo.environment["PATH"] ?? "")
+            .split(separator: ":").map(String.init)
+        return (pathEntries.map { "\($0)/markitdown" })
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 }

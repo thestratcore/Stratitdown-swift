@@ -7,7 +7,13 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "MarkItDownSwift",
-            path: "Sources/MarkItDownSwift"
+            path: "Sources/MarkItDownSwift",
+            resources: [.process("Resources")]
+        ),
+        .testTarget(
+            name: "MarkItDownSwiftTests",
+            dependencies: ["MarkItDownSwift"],
+            path: "Tests/MarkItDownSwiftTests"
         ),
     ]
 )

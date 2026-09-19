@@ -17,17 +17,26 @@ enum MarkItDownCLIConverter {
         process.executableURL = URL(fileURLWithPath: AppConfig.markitdownBinaryPath)
         process.arguments = [fileURL.path, "-o", outputURL.path]
 
-        let stderrPipe = Pipe()
-        process.standardError = stderrPipe
-        process.standardOutput = Pipe() // markitdown writes to -o, keep stdout quiet
+        let diagnosticsURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        FileManager.default.createFile(atPath: diagnosticsURL.path, contents: nil)
+        let diagnosticsHandle = try FileHandle(forWritingTo: diagnosticsURL)
+        defer {
+            try? diagnosticsHandle.close()
+            try? FileManager.default.removeItem(at: diagnosticsURL)
+        }
+        process.standardError = diagnosticsHandle
+        process.standardOutput = diagnosticsHandle
 
         try process.run()
-        process.waitUntilExit()
+        let deadline = Date().addingTimeInterval(300)
+        while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.1) }
+        if process.isRunning { process.terminate(); throw ConversionError.markitdownFailed(exitCode: 124, stderr: "Conversion timed out after 300 seconds") }
 
         if process.terminationStatus != 0 {
-            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            try? diagnosticsHandle.synchronize()
+            let stderrData = (try? Data(contentsOf: diagnosticsURL)) ?? Data()
             let stderrText = String(data: stderrData, encoding: .utf8) ?? ""
-            throw ConversionError.markitdownFailed(exitCode: process.terminationStatus, stderr: stderrText)
+            throw ConversionError.markitdownFailed(exitCode: process.terminationStatus, stderr: String(stderrText.prefix(4_096)))
         }
 
         return try String(contentsOf: outputURL, encoding: .utf8)

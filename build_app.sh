@@ -22,9 +22,14 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 cp "$BUILD_DIR/release/$EXECUTABLE_NAME" "$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
 cp "$SCRIPT_DIR/Resources/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 cp "$SCRIPT_DIR/Resources/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+# SwiftPM emits target resources (the header logos) as a side-by-side bundle.
+# Bundle.module resolves it via Bundle.main.resourceURL once it's in Contents/Resources.
+cp -R "$BUILD_DIR/release/${EXECUTABLE_NAME}_${EXECUTABLE_NAME}.bundle" "$APP_BUNDLE/Contents/Resources/"
 echo "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
 
 echo "Code signing (ad-hoc)..."
+# Downloaded assets arrive with quarantine/Finder xattrs, which codesign rejects outright.
+xattr -cr "$APP_BUNDLE"
 codesign --force --deep --sign - "$APP_BUNDLE"
 
 echo "Built: $APP_BUNDLE"

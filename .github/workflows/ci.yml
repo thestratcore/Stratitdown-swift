@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Build and test
+        run: swift test -Xswiftc -warnings-as-errors -Xswiftc -strict-concurrency=complete
+      - name: Validate package and build script
+        run: |
+          plutil -lint Resources/Info.plist
+          zsh -n build_app.sh
+          git diff --check

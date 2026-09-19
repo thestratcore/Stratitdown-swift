@@ -10,37 +10,45 @@ func runHeadlessConvert(arguments: [String]) -> Never {
         exit(2)
     }
 
-    let inputURL = URL(fileURLWithPath: arguments[1]).standardizedFileURL
-    let outputURL = arguments.count >= 3
-        ? URL(fileURLWithPath: arguments[2]).standardizedFileURL
+    let positional = arguments.dropFirst().filter { $0 != "--overwrite" }
+    let inputURL = URL(fileURLWithPath: arguments[1]).standardizedFileURL.resolvingSymlinksInPath()
+    let outputURL = positional.count >= 2
+        ? URL(fileURLWithPath: positional[1]).standardizedFileURL
         : inputURL.deletingPathExtension().appendingPathExtension("md")
+    let ext = inputURL.pathExtension.lowercased()
 
     let apiKey = KeychainStore.read() ?? ""
 
     let job = ConversionJob(
         inputPath: inputURL,
         outputPath: outputURL,
-        model: AppConfig.defaultModel,
-        prompt: AppConfig.defaultPrompt,
-        apiKey: apiKey
+        apiKey: apiKey,
+        engine: ext == "pdf" || MistralOCRConverter.imageExtensions.contains(ext) ? .cloud : .local,
+        overwrite: arguments.contains("--overwrite")
     )
 
     let semaphore = DispatchSemaphore(value: 0)
-    var exitCode: Int32 = 0
+    let result = HeadlessResult()
 
-    Task {
+    Task.detached {
         do {
-            let markdown = try await ConversionRouter.convert(job: job)
+            let markdown = try await ConversionRouter.convert(job: job) { message in
+                print("ROUTE: \(message)")
+            }
             try markdown.write(to: outputURL, atomically: true, encoding: .utf8)
             print("OK: wrote \(markdown.count) characters to \(outputURL.path)")
         } catch {
             FileHandle.standardError.write(Data("ERROR: \(error.localizedDescription)\n".utf8))
-            exitCode = 1
+            result.code = 1
         }
         semaphore.signal()
     }
     semaphore.wait()
-    exit(exitCode)
+    exit(result.code)
+}
+
+private final class HeadlessResult: @unchecked Sendable {
+    var code: Int32 = 0
 }
 
 if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "--convert" {

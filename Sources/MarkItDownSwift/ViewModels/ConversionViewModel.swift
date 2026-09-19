@@ -6,9 +6,9 @@ import SwiftUI
 final class ConversionViewModel: ObservableObject {
     @Published var inputPath: String = ""
     @Published var outputPath: String = ""
-    @Published var model: String = AppConfig.defaultModel
-    @Published var prompt: String = AppConfig.defaultPrompt
     @Published var apiKeyInput: String = ""
+    @Published var overwriteExistingOutput = false
+    @Published private(set) var pendingPDFAnalysis: PDFAnalysis?
 
     @Published private(set) var state: ConversionState = .standby
     @Published private(set) var log: String = ""
@@ -21,6 +21,7 @@ final class ConversionViewModel: ObservableObject {
     private var conversionTask: Task<Void, Never>?
 
     init() {
+        KeychainStore.deleteLegacyOpenAIKey()
         refreshConfigStatus()
     }
 
@@ -36,6 +37,19 @@ final class ConversionViewModel: ObservableObject {
 
     func clearLog() {
         log = ""
+    }
+
+    /// Resets the form back to a fresh state. Lives here rather than in the view because
+    /// `state` and `log` are `private(set)`.
+    func clearAll() {
+        guard !isConverting else {
+            appendLog("Conversion in progress — fields not cleared.")
+            return
+        }
+        inputPath = ""
+        outputPath = ""
+        log = ""
+        state = .standby
     }
 
     func saveApiKey() {
@@ -76,50 +90,80 @@ final class ConversionViewModel: ObservableObject {
             setState(.error)
             return
         }
-        let inputURL = URL(fileURLWithPath: trimmedInput).standardizedFileURL
+        let inputURL = URL(fileURLWithPath: trimmedInput).standardizedFileURL.resolvingSymlinksInPath()
 
         let trimmedOutput = outputPath.trimmingCharacters(in: .whitespacesAndNewlines)
         let outputURL = trimmedOutput.isEmpty
             ? defaultOutputPath(for: inputURL)
             : URL(fileURLWithPath: trimmedOutput).standardizedFileURL
         outputPath = outputURL.path
+        guard inputURL != outputURL.resolvingSymlinksInPath() else { appendLog("ERROR: Output path must differ from input."); setState(.error); return }
 
-        let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedModel.isEmpty else {
-            appendLog("ERROR: Model is required")
-            setState(.error)
-            return
+        let extensionName = inputURL.pathExtension.lowercased()
+        let requestedEngine = selectedPDFEngine
+        selectedPDFEngine = nil
+        if extensionName == "pdf", pendingPDFAnalysis == nil, requestedEngine == nil {
+            do {
+                let analysis = try PDFTextLayerDetector.analyze(fileURL: inputURL)
+                if !analysis.isScanned {
+                    pendingPDFAnalysis = analysis
+                    appendLog("PDF inspected: \(analysis.pagesWithText)/\(analysis.pageCount) pages contain text. Choose an engine.")
+                    return
+                }
+            } catch {
+                appendLog("ERROR: \(error.localizedDescription)"); setState(.error); return
+            }
         }
-
-        guard let apiKey = KeychainStore.read(), !apiKey.isEmpty else {
-            appendLog("ERROR: OpenAI API key is not configured")
-            setState(.error)
-            return
+        let needsCloud = (requestedEngine == .cloud) ||
+            (requestedEngine == nil && (extensionName == "pdf" || MistralOCRConverter.imageExtensions.contains(extensionName)))
+        guard !needsCloud || (KeychainStore.read()?.isEmpty == false) else {
+            appendLog("ERROR: Mistral API key is not configured for OCR")
+            setState(.error); return
         }
 
         let job = ConversionJob(
             inputPath: inputURL,
             outputPath: outputURL,
-            model: trimmedModel,
-            prompt: prompt,
-            apiKey: apiKey
+            apiKey: KeychainStore.read() ?? "",
+            engine: requestedEngine ?? (extensionName == "pdf" ? .cloud : (needsCloud ? .cloud : .local)),
+            overwrite: overwriteExistingOutput
         )
 
         isConverting = true
         setState(.waiting)
         appendLog("Starting conversion: \(inputURL.path)")
         appendLog("Output path: \(outputURL.path)")
-        appendLog("Model: \(trimmedModel)")
 
         conversionTask = Task { [weak self] in
             await self?.runConversion(job: job)
         }
     }
 
+    func choosePDFEngine(_ engine: ConversionEngine) {
+        guard pendingPDFAnalysis != nil else { return }
+        pendingPDFAnalysis = nil
+        startConversionWithEngine(engine)
+    }
+
+    func cancelPDFChoice() { pendingPDFAnalysis = nil }
+
+    private func startConversionWithEngine(_ engine: ConversionEngine) {
+        // The next startConversion call performs all common validation; this flag only
+        // carries the explicit user choice through the single conversion entry point.
+        selectedPDFEngine = engine
+        startConversion()
+    }
+
+    private var selectedPDFEngine: ConversionEngine?
+
     private func runConversion(job: ConversionJob) async {
         do {
-            let markdown = try await ConversionRouter.convert(job: job)
-            try markdown.write(to: job.outputPath, atomically: true, encoding: .utf8)
+            let markdown = try await ConversionRouter.convert(job: job) { [weak self] message in
+                Task { @MainActor in
+                    self?.appendLog(message)
+                }
+            }
+            try OutputPublisher.publish(markdown, to: job.outputPath, allowingOverwrite: job.overwrite)
 
             appendLog("Conversion complete. Wrote \(markdown.count) characters to \(job.outputPath.path)")
             setState(.finished)

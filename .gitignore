@@ -3,3 +3,9 @@
 .swiftpm/
 dist/
 *.xcuserstate
+*.p8
+*.pem
+*.key
+.env
+.env.*
+*.mdoc

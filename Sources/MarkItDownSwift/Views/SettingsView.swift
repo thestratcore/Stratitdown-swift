@@ -6,16 +6,16 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("OpenAI API Key")
+            Text("Mistral API Key")
                 .font(.title2.bold())
 
-            Text("Saved once to the macOS Keychain — you shouldn't need to touch this again unless the key changes.")
+            Text("Used for OCR on PDFs and images. Saved once to the macOS Keychain — you shouldn't need to touch this again unless the key changes.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack {
-                SecureField("sk-...", text: $viewModel.apiKeyInput)
+                SecureField("Paste your Mistral API key", text: $viewModel.apiKeyInput)
                 Button("Save to Keychain") { viewModel.saveApiKey() }
             }
 
