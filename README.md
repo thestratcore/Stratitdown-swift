@@ -8,7 +8,7 @@ The app routes office, mail, text, archive, and audio formats to the locally ins
 
 Cloud OCR sends document contents to Mistral over HTTPS and may incur usage charges. API keys are stored in the macOS Keychain. Files uploaded through Mistral’s Files API are deleted after conversion when possible; cleanup failures are reported. Review Mistral’s retention and privacy terms before processing sensitive documents. The application does not claim zero retention.
 
-Mistral OCR accepts files up to 50 MiB and 1,000 PDF pages. OCR output is probabilistic and the `mistral-ocr-latest` alias may change over time. Embedded OCR image assets are not downloaded into the Markdown output.
+Mistral OCR accepts files up to 50 MiB and 1,000 PDF pages. OCR output is probabilistic and the `mistral-ocr-latest` alias may change over time. Returned table content is inserted into the Markdown output; a table reference without its content causes conversion to fail. Embedded OCR image assets are not downloaded into the Markdown output.
 
 ## Build
 

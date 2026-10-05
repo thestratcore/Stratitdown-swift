@@ -24,7 +24,7 @@ enum MistralOCRClient {
         let request = OCRRequest(
             model: AppConfig.ocrModel,
             document: document.payload,
-            tableFormat: nil,
+            tableFormat: "markdown",
             includeImageBase64: false
         )
 
@@ -37,12 +37,7 @@ enum MistralOCRClient {
         urlRequest.timeoutInterval = 300
 
         let response: OCRResponse = try await send(urlRequest)
-        guard !response.pages.isEmpty else { throw ConversionError.ocrEmptyResponse }
-
-        return response.pages
-            .sorted { $0.index < $1.index }
-            .map(\.markdown)
-            .joined(separator: "\n\n---\n\n")
+        return try response.combinedMarkdown()
     }
 
     // MARK: - Files API (documents over the inline limit)
@@ -170,12 +165,61 @@ struct DocumentPayload: Encodable {
     }
 }
 
-private struct OCRResponse: Decodable {
+struct OCRResponse: Decodable {
+    struct Table: Decodable {
+        let id: String
+        let content: String
+    }
+
     struct Page: Decodable {
         let index: Int
         let markdown: String
+        let tables: [Table]?
+
+        func expandedMarkdown() throws -> String {
+            var result = markdown
+            var seenIDs = Set<String>()
+            for table in tables ?? [] {
+                guard !table.id.isEmpty, seenIDs.insert(table.id).inserted,
+                      !table.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw ConversionError.mistralRequestFailed(status: 200, body: "Invalid or duplicate OCR table on page \(index).")
+                }
+                let reference = try NSRegularExpression(
+                    pattern: "(?<!!)\\[[^\\]\\r\\n]*\\]\\(\(NSRegularExpression.escapedPattern(for: table.id))\\)"
+                )
+                let matches = reference.matches(in: result, range: NSRange(result.startIndex..., in: result))
+                if matches.isEmpty {
+                    // Preserve returned tables even if the provider omitted their placeholder.
+                    if !result.contains(table.content) {
+                        result += "\n\n" + table.content
+                    }
+                } else {
+                    // Reverse replacement preserves match offsets and treats table text literally.
+                    for match in matches.reversed() {
+                        guard let range = Range(match.range, in: result) else { continue }
+                        result.replaceSubrange(range, with: table.content)
+                    }
+                }
+            }
+            let unresolved = try NSRegularExpression(
+                pattern: #"(?<!!)\[[^\]\r\n]*\]\((tbl-[^()\s]+\.(?:md|html))\)"#
+            )
+            if unresolved.firstMatch(in: result, range: NSRange(result.startIndex..., in: result)) != nil {
+                throw ConversionError.mistralRequestFailed(
+                    status: 200, body: "OCR returned a table link without its table content on page \(index)."
+                )
+            }
+            return result
+        }
     }
     let pages: [Page]
+
+    func combinedMarkdown() throws -> String {
+        guard !pages.isEmpty else { throw ConversionError.ocrEmptyResponse }
+        return try pages.sorted { $0.index < $1.index }
+            .map { try $0.expandedMarkdown() }
+            .joined(separator: "\n\n---\n\n")
+    }
 }
 
 private struct UploadedFile: Decodable {
